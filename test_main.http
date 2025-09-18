@@ -1,11 +1,11 @@
 # Test your FastAPI endpoints
-
-GET http://127.0.0.1:8000/
-Accept: application/json
-
 ###
-
-GET http://127.0.0.1:8000/hello/User
+POST http://localhost:8000/api/reviews
 Accept: application/json
+Content-Type: application/json
 
-###
+{
+  "code": "function sum(a,b){ return a+b; }",
+  "language": "javascript",
+  "style": "bug"
+}
