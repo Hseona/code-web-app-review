@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from codereview_agent.review.api.router import router as review_router
+from codereview_agent.review.api.review_router import router as review_router
 
 codeReviewAgent = FastAPI()
 
