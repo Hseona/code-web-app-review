@@ -11,12 +11,18 @@ from pydantic import ValidationError
 
 from codereview_agent.review.schemas import ReviewRequest
 from codereview_agent.review.service import ReviewService
+from .openapi_docs import build_review_request_schema
 
 router = APIRouter()
 review_service = ReviewService()
 
 
-@router.post("/reviews")
+@router.post(
+    "/reviews",
+    openapi_extra={
+        "requestBody": build_review_request_schema()
+    },
+)
 async def request_code_review(raw_request: Request):
     body_bytes = await raw_request.body()
     if not body_bytes:

@@ -76,10 +76,16 @@ class ClaudeReviewClient:
         *,
         language: str,
         style: str,
+        code: str | None = None,
     ) -> Dict[str, Any]:
         """Request a structured review payload from Claude."""
 
-        payload = self._build_payload(request, language=language, style=style)
+        payload = self._build_payload(
+            request,
+            language=language,
+            style=style,
+            code=code or request.code,
+        )
 
         last_error: Optional[ClaudeReviewError] = None
         for attempt in range(1, self._max_attempts + 1):
@@ -102,40 +108,36 @@ class ClaudeReviewClient:
         *,
         language: str,
         style: str,
+        code: str,
     ) -> Dict[str, Any]:
         request_snapshot = {
-            "code": request.code,
+            "code": code,
             "language": request.language,
             "resolvedLanguage": language,
             "style": style,
         }
         user_prompt_lines = [
-            "You are CodeReviewAgent. Produce a JSON object with keys 'summary', 'suggestions', and 'metrics'.",
-            "Each suggestion requires: id, title, rationale, severity, tags, range(startLine,startCol,endLine,endCol),",
-            "fix(type,diff), fixSnippet, confidence, status. Return only JSON without commentary.",
-            "Review request payload:",
+            "Produce a concise code review as JSON with keys 'summary', 'suggestions', and 'metrics'.",
+            "Each suggestion must include id, title, rationale, severity, tags, range(startLine,startCol,endLine,endCol),",
+            "fix(type,diff), fixSnippet, confidence, status. Return JSON only with no extra narration.",
+            "Follow the requested language and tone strictly.",
+            "Review request context:",
             json.dumps(request_snapshot, ensure_ascii=True, indent=2),
             "Code snippet:",
-            f"```{language or 'text'}\n{request.code}\n```",
+            f"```{language or 'text'}\n{code}\n```",
         ]
+
+        system_prompt = (
+            "You are CodeReviewAgent. Review code in the requested style and language. "
+            "Respond with valid JSON matching the required schema without additional text."
+        )
 
         return {
             "model": self._model,
             "max_tokens": self._max_tokens,
             "temperature": self._temperature,
+            "system": system_prompt,
             "messages": [
-                {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "You are a structured reviewer. Respond with valid JSON only. "
-                                "Ensure the JSON matches the described schema."
-                            ),
-                        }
-                    ],
-                },
                 {
                     "role": "user",
                     "content": [
@@ -223,6 +225,3 @@ class ClaudeReviewClient:
         if lines and lines[-1].startswith("```"):
             lines = lines[:-1]
         return "\n".join(lines).strip()
-
-
-__all__ = ["ClaudeReviewClient", "ClaudeReviewError"]

@@ -69,6 +69,8 @@ class ReviewService:
         style = self._normalize_style(request.style)
         language = self._resolve_language(request.language, request.code)
 
+        code_for_model = self._prepare_code_for_model(request.code)
+
         client = self._review_client or ClaudeReviewClient()
         self._review_client = client
 
@@ -77,6 +79,7 @@ class ReviewService:
                 request,
                 language=language,
                 style=style,
+                code=code_for_model,
             )
             data = self._build_remote_data(
                 request=request,
@@ -192,6 +195,11 @@ class ReviewService:
             return DEFAULT_STYLE
         normalized = style.lower()
         return normalized if normalized in STYLE_PROFILES else DEFAULT_STYLE
+
+    def _prepare_code_for_model(self, code: str) -> str:
+        if len(code) <= 500:
+            return code
+        return code[:500]
 
     def _resolve_language(self, language: Optional[str], code: str) -> str:
         if language:
