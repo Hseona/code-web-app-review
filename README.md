@@ -1,8 +1,7 @@
 This project utilizes Codex and Claude Code.
 # CodeReviewAgent
 
-AI 기반 코드 리뷰 자동화 백엔드 API 서비스입니다. <br>
-빠르고 일관된 리뷰를 제공해 개인 및 소규모 팀의 개발 생산성을 높이는 것이 목표입니다.
+AI 기반 코드 리뷰 자동화 백엔드 API 서비스입니다. 빠르고 일관된 리뷰를 제공해 개인 및 소규모 팀의 개발 생산성을 높이는 것이 목표입니다.
 
 ## 기술 스택
 
@@ -12,50 +11,39 @@ AI 기반 코드 리뷰 자동화 백엔드 API 서비스입니다. <br>
 - Poetry (의존성/패키징)
 - Pytest (단위 테스트)
 
+## 주요 기능
+
+- POST `/api/reviews` 엔드포인트가 코드, 언어(선택), 리뷰 스타일을 받아 구조화된 리뷰 결과를 반환합니다.
+- 요청 본문이 줄바꿈이나 따옴표를 이스케이프하지 않아도 라우터가 JSON을 정규화하고 휴리스틱으로 파싱합니다.
+- `ReviewService`가 리뷰 스타일과 언어를 정규화하며 모델 입력을 500자로 제한해 Claude 3 Haiku 호출 안정성을 높입니다.
+- Claude 응답이 비어 있거나 오류가 발생하면 `==` → `===`, `console.log` 정리, 설명 없는 `TODO`, 테스트 스캐폴드 제안을 포함한 휴리스틱 백업을 제공합니다.
+- 모든 응답에 처리 시간과 사용된 모델명을 담은 `ReviewMetrics`가 포함됩니다.
+
 ## 아키텍처 개요
 
-- `review/api` – FastAPI 라우터와 엔드포인트 정의 (`/api/reviews`), 비정상 JSON 요청을 정규화한 뒤 비즈니스 서비스로 전달.
-- `review/schemas` – 요청·응답 스키마(`ReviewRequest`, `ReviewResponse`).
-- `review/models` – 리뷰 결과에 포함되는 제안·메트릭 등 도메인 모델.
-- `review/service` – `ReviewService`가 Claude 3 Haiku 호출·재시도 및 휴리스틱 기반 백업 로직을 포함해 핵심 비즈니스 로직을 처리.
-- `review/service/claude_client.py` – Anthropic Claude 3 Haiku API와의 통신, 재시도, 응답 정규화를 담당.
-- `review/config.py` – `.env` / 환경 변수 기반 Claude 설정 로더.
-- `tests` – `ReviewService` 동작을 검증하는 Pytest 케이스.
-
 ```
-codereview_agent/
-├── app/
-│   ├── main.py
-│   └── run.py
-├── review/
-│   ├── api/
-│   │   └── router.py
-│   ├── models/
-│   │   ├── review_data.py
-│   │   ├── review_examples.py
-│   │   ├── review_metrics.py
-│   │   └── suggestion.py
-│   ├── schemas/
-│   │   ├── ReviewRequest.py
-│   │   └── ReviewResponse.py
-│   └── service/
-│       └── service.py
-└── tests/
-    └── test_review_service.py
+.
+├── codereview_agent/
+│   ├── app/               FastAPI 애플리케이션 초기화와 CORS 설정 (`main.py`, `run.py`)
+│   ├── review/
+│   │   ├── api/           `/api/reviews` 라우터, 본문 정규화, OpenAPI 문서
+│   │   ├── config.py      `.env` 기반 Claude 설정 로더
+│   │   ├── models/        응답 도메인 모델(`ReviewData`, `Suggestion`, `ReviewMetrics`)
+│   │   ├── schemas/       Pydantic 요청·응답 스키마(`ReviewRequest`, `ReviewResponse`)
+│   │   └── service/       Claude 연동 및 휴리스틱 백업 로직(`review_service.py`, `claude_client.py`)
+├── tests/                 `ReviewService`와 라우터 회귀 테스트
+├── pyproject.toml         Poetry 프로젝트 설정
+└── test_main.http         HTTP 요청 시나리오 예시
 ```
 
 ## 리뷰 워크플로우
 
-1. 클라이언트가 코드, 언어(선택), 리뷰 스타일(`bug`, `detail`, `refactor`, `test`)을 `/api/reviews`로 전송합니다. 줄바꿈이나 따옴표가 이스케이프되지 않은 경우라도 라우터가 자동으로 정규화합니다.
-2. `ReviewService`가 스타일 프로필을 정규화하고 간단한 휴리스틱으로 언어를 감지한 뒤 Claude 3 Haiku API에 동일한 정보를 전달합니다. API 호출은 최대 3회 재시도합니다.
-3. Claude 응답이 정상적이면 모델이 생성한 요약·제안·메트릭을 그대로 사용합니다. 실패 시 기존 휴리스틱(아래 제안 빌더)을 백업으로 실행합니다.
-4. 스타일에 따라 다음 제안 빌더를 실행합니다.
-   - 비엄격 비교(`==`)를 엄격 비교(`===`)로 교체 제안
-   - `console.log` 정리 안내
-   - 설명이 없는 `TODO` 주석 보강
-   - 테스트 스타일 선택 시 테스트 스캐폴드 추가 권장
-5. 제안, 요약, 처리 시간(`ReviewMetrics`)을 포함한 구조화 응답을 반환합니다. Claude 호출 실패 시 HTTP 응답 코드는 503으로, 메시지에 실패 사유와 휴리스틱 요약이 포함됩니다.
-6. 향후 Accept/Reject 결과를 활용해 모델 개선을 목표로 합니다.
+1. 클라이언트가 코드, 언어(선택), 리뷰 스타일(`bug`, `detail`, `refactor`, `test`)을 `/api/reviews`로 전송합니다.
+2. FastAPI 라우터가 요청 본문을 JSON으로 파싱하고, 실패 시 개행/따옴표를 정규화한 뒤 휴리스틱으로 `code`·`language`·`style`을 추출합니다.
+3. `ReviewRequest` 스키마가 입력을 검증하고 스타일/언어 값을 정규화합니다.
+4. `ReviewService`가 리뷰 스타일을 확정하고 간단한 패턴 매칭으로 언어를 추론하며, 모델 입력 코드를 최대 500자까지 잘라 `ClaudeReviewClient`에 전달합니다.
+5. Claude 호출이 성공하면 응답에서 요약·제안·메트릭을 정규화해 `ReviewData`로 변환하고, 누락된 요약은 스타일 프로필을 이용해 보완합니다.
+6. Claude 호출이 실패하면 사유를 포함한 요약과 휴리스틱 제안 목록을 만들어 503 응답과 함께 반환합니다.
 
 ## 리뷰 스타일 프로필
 
@@ -124,8 +112,8 @@ poetry run pytest
       }
     ],
     "metrics": {
-      "processingTimeMs": 15,
-      "model": "codex-heuristic-v1"
+      "processingTimeMs": 42,
+      "model": "claude-3-haiku-20240307"
     }
   }
 }
@@ -146,7 +134,7 @@ CLAUDE_MODEL=claude-3-haiku-20240307
 CLAUDE_TIMEOUT_SECONDS=30
 CLAUDE_MAX_ATTEMPTS=3
 CLAUDE_RETRY_DELAY_SECONDS=0.5
-CLAUDE_MAX_TOKENS=2048
+CLAUDE_MAX_TOKENS=1200
 CLAUDE_TEMPERATURE=0.0
 ```
 
