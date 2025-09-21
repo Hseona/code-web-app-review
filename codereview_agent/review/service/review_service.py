@@ -1,9 +1,13 @@
 """Business logic for handling code review requests."""
 
+from __future__ import annotations
+
 import time
 from dataclasses import dataclass
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 from uuid import uuid4
+
+from pydantic import ValidationError
 
 from codereview_agent.review.models import (
     ReviewData,
@@ -13,6 +17,11 @@ from codereview_agent.review.models import (
     SuggestionRange,
 )
 from codereview_agent.review.schemas import ReviewRequest, ReviewResponse
+from codereview_agent.review.service.claude_client import (
+    ClaudeReviewClient,
+    ClaudeReviewError,
+)
+
 
 @dataclass(frozen=True)
 class StyleProfile:
@@ -45,22 +54,109 @@ STYLE_PROFILES = {
 }
 
 DEFAULT_STYLE = "detail"
-DEFAULT_MODEL_NAME = "codex-heuristic-v1"
 DEFAULT_LANGUAGE = "javascript"
+FALLBACK_MODEL_NAME = "codex-heuristic-v1"
 
 
 class ReviewService:
-    """Generates structured code review results based on project heuristics."""
+    """Generates structured code review results via Claude integration with fallback heuristics."""
+
+    def __init__(self, review_client: Optional[ClaudeReviewClient] = None) -> None:
+        self._review_client = review_client
 
     def generate_review(self, request: ReviewRequest) -> ReviewResponse:
         start_time = time.perf_counter()
         style = self._normalize_style(request.style)
         language = self._resolve_language(request.language, request.code)
-        suggestions = self._collect_suggestions(request.code, style)
-        summary = self._build_summary(style, language, suggestions)
-        processing_ms = int((time.perf_counter() - start_time) * 1000)
 
-        data = ReviewData(
+        code_for_model = self._prepare_code_for_model(request.code)
+
+        client = self._review_client or ClaudeReviewClient()
+        self._review_client = client
+
+        try:
+            remote_payload = client.create_review(
+                request,
+                language=language,
+                style=style,
+                code=code_for_model,
+            )
+            data = self._build_remote_data(
+                request=request,
+                style=style,
+                language=language,
+                remote_payload=remote_payload,
+                client=client,
+                started_at=start_time,
+            )
+            return ReviewResponse(code=200, message="OK", data=data)
+        except ClaudeReviewError as exc:
+            suggestions = self._collect_suggestions(request.code, style)
+            fallback_summary = self._build_summary(style, language, suggestions)
+            summary = (
+                "Claude API 호출에 실패했습니다. 잠시 후 다시 시도해주세요. "
+                f"(사유: {exc.user_message}) 내부 휴리스틱 결과를 제공합니다. {fallback_summary}"
+            )
+            processing_ms = int((time.perf_counter() - start_time) * 1000)
+
+            data = ReviewData(
+                session_id=str(uuid4()),
+                original_code=request.code,
+                current_code=request.code,
+                summary=summary,
+                suggestions=suggestions,
+                metrics=ReviewMetrics(
+                    processing_time_ms=processing_ms,
+                    model=FALLBACK_MODEL_NAME,
+                ),
+            )
+
+            return ReviewResponse(
+                code=503,
+                message="Claude API 호출 실패",
+                data=data,
+            )
+
+    # --- helpers -----------------------------------------------------------------
+
+    def _build_remote_data(
+        self,
+        *,
+        request: ReviewRequest,
+        style: str,
+        language: str,
+        remote_payload: dict,
+        client: ClaudeReviewClient,
+        started_at: float,
+    ) -> ReviewData:
+        remote_suggestions = remote_payload.get("suggestions")
+        suggestions = self._normalize_remote_suggestions(remote_suggestions)
+
+        summary = remote_payload.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            summary = self._build_summary(style, language, suggestions)
+
+        metrics_payload = remote_payload.get("metrics") if isinstance(remote_payload, dict) else None
+
+        processing_ms: Optional[int] = None
+        model_name: Optional[str] = None
+
+        if isinstance(metrics_payload, dict):
+            processing_candidate = metrics_payload.get("processingTimeMs")
+            if isinstance(processing_candidate, int) and processing_candidate >= 0:
+                processing_ms = processing_candidate
+
+            model_candidate = metrics_payload.get("model")
+            if isinstance(model_candidate, str) and model_candidate.strip():
+                model_name = model_candidate
+
+        if processing_ms is None:
+            processing_ms = int((time.perf_counter() - started_at) * 1000)
+
+        if not model_name:
+            model_name = client.model_name
+
+        return ReviewData(
             session_id=str(uuid4()),
             original_code=request.code,
             current_code=request.code,
@@ -68,19 +164,42 @@ class ReviewService:
             suggestions=suggestions,
             metrics=ReviewMetrics(
                 processing_time_ms=processing_ms,
-                model=DEFAULT_MODEL_NAME,
+                model=model_name,
             ),
         )
 
-        return ReviewResponse(code=200, message="OK", data=data)
+    def _normalize_remote_suggestions(self, raw_suggestions: Any) -> List[Suggestion]:
+        if not isinstance(raw_suggestions, Iterable):
+            return []
 
-    # --- helpers -----------------------------------------------------------------
+        suggestions: List[Suggestion] = []
+        for entry in raw_suggestions:
+            if not isinstance(entry, dict):
+                continue
+
+            normalized = dict(entry)
+            normalized.setdefault("id", str(uuid4()))
+            normalized.setdefault("status", "pending")
+
+            try:
+                suggestion = Suggestion.model_validate(normalized)
+            except ValidationError:
+                continue
+
+            suggestions.append(suggestion)
+
+        return suggestions
 
     def _normalize_style(self, style: Optional[str]) -> str:
         if not style:
             return DEFAULT_STYLE
         normalized = style.lower()
         return normalized if normalized in STYLE_PROFILES else DEFAULT_STYLE
+
+    def _prepare_code_for_model(self, code: str) -> str:
+        if len(code) <= 500:
+            return code
+        return code[:500]
 
     def _resolve_language(self, language: Optional[str], code: str) -> str:
         if language:
