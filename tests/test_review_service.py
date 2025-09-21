@@ -14,8 +14,8 @@ class RecordingClaudeClient:
         self.model_name = "claude-3-haiku-20240307"
         self.calls = []
 
-    def create_review(self, request, *, language: str, style: str):
-        self.calls.append({"language": language, "style": style, "code": request.code})
+    def create_review(self, request, *, language: str, style: str, code: str):
+        self.calls.append({"language": language, "style": style, "code": code})
         return {
             "summary": "Remote review summary",
             "suggestions": [
@@ -45,7 +45,7 @@ class FailingClaudeClient:
     def __init__(self) -> None:
         self.model_name = "claude-3-haiku-20240307"
 
-    def create_review(self, request, *, language: str, style: str):  # noqa: ARG002 - interface parity
+    def create_review(self, request, *, language: str, style: str, code: str):  # noqa: ARG002 - interface parity
         raise ClaudeReviewError("네트워크 오류")
 
 
@@ -54,8 +54,8 @@ class TypeScriptRecordingClient:
         self.model_name = "claude-3-haiku-20240307"
         self.last_call = None
 
-    def create_review(self, request, *, language: str, style: str):
-        self.last_call = {"language": language, "style": style}
+    def create_review(self, request, *, language: str, style: str, code: str):
+        self.last_call = {"language": language, "style": style, "code": code}
         return {
             "summary": f"{language.upper()} remote summary",
             "suggestions": [],
@@ -80,6 +80,7 @@ def test_generate_review_success_uses_remote_payload():
     assert len(response.data.suggestions) == 1
     assert client.calls and client.calls[0]["language"] == "javascript"
     assert client.calls[0]["style"] == "bug"
+    assert client.calls[0]["code"] == code
 
 
 def test_generate_review_failure_returns_fallback_suggestions():
@@ -112,9 +113,35 @@ def test_generate_review_detects_typescript_language():
 
     assert response.code == 200
     assert response.data.summary == "TYPESCRIPT remote summary"
-    assert client.last_call == {"language": "typescript", "style": "detail"}
+    assert client.last_call == {"language": "typescript", "style": "detail", "code": code}
     assert response.data.metrics.model == client.model_name
     assert response.data.suggestions == []
+
+
+def test_generate_review_truncates_code_for_remote_payload():
+    class RecordingClient:
+        model_name = "claude-3-haiku-20240307"
+
+        def __init__(self) -> None:
+            self.last_code = None
+
+        def create_review(self, request, *, language: str, style: str, code: str):  # noqa: ARG002
+            self.last_code = code
+            return {
+                "summary": "ok",
+                "suggestions": [],
+                "metrics": {"model": self.model_name},
+            }
+
+    long_code = "function main() {\n" + ("const value = 1;\n" * 300) + "}\n"
+    request = ReviewRequest(code=long_code)
+    service = ReviewService(review_client=RecordingClient())
+
+    response = service.generate_review(request)
+
+    assert response.code == 200
+    assert len(service._review_client.last_code) == 500
+    assert service._review_client.last_code == long_code[:500]
 
 
 def test_api_route_accepts_multiline_code_payload(monkeypatch):
@@ -124,8 +151,8 @@ def test_api_route_accepts_multiline_code_payload(monkeypatch):
         def __init__(self) -> None:
             self.last_code = None
 
-        def create_review(self, request, *, language: str, style: str):  # noqa: ARG002
-            self.last_code = request.code
+        def create_review(self, request, *, language: str, style: str, code: str):  # noqa: ARG002
+            self.last_code = code
             return {
                 "summary": "ok",
                 "suggestions": [],
@@ -159,8 +186,8 @@ def test_api_route_handles_unescaped_newlines(monkeypatch):
         def __init__(self) -> None:
             self.last_code = None
 
-        def create_review(self, request, *, language: str, style: str):  # noqa: ARG002
-            self.last_code = request.code
+        def create_review(self, request, *, language: str, style: str, code: str):  # noqa: ARG002
+            self.last_code = code
             return {
                 "summary": "ok",
                 "suggestions": [],
@@ -191,8 +218,8 @@ def test_api_route_handles_unescaped_quotes_and_newlines(monkeypatch):
         def __init__(self) -> None:
             self.last_code = None
 
-        def create_review(self, request, *, language: str, style: str):  # noqa: ARG002
-            self.last_code = request.code
+        def create_review(self, request, *, language: str, style: str, code: str):  # noqa: ARG002
+            self.last_code = code
             return {
                 "summary": "ok",
                 "suggestions": [],
