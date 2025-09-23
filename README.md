@@ -29,7 +29,7 @@ AI 기반 코드 리뷰 자동화 백엔드 API 서비스입니다. 빠르고 �
 │   │   ├── api/           `/api/reviews` 라우터, 본문 정규화, OpenAPI 문서
 │   │   ├── config.py      `.env` 기반 Claude 설정 로더
 │   │   ├── models/        응답 도메인 모델(`ReviewData`, `Suggestion`, `ReviewMetrics`)
-│   │   ├── schemas/       Pydantic 요청·응답 스키마(`ReviewRequest`, `ReviewResponse`)
+│   │   ├── schemas/       Pydantic 요청·응답 스키마(`ReviewRequest`, `ApiSuccessResponse`, `ApiErrorResponse`)
 │   │   └── service/       Claude 연동 및 휴리스틱 백업 로직(`review_service.py`, `claude_client.py`)
 ├── tests/                 `ReviewService`와 라우터 회귀 테스트
 ├── pyproject.toml         Poetry 프로젝트 설정

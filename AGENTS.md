@@ -26,11 +26,11 @@
   - `language`: 언어 명시 (선택, 공백이면 무시)
   - `style`: 리뷰 스타일 프로필 (`bug` | `detail` | `refactor` | `test`)
 - 처리 로직:
-  - 요청이 유효하면 `ReviewResponse.code` 200과 함께 Claude 응답 또는 휴리스틱 결과를 반환합니다.
-  - Claude 호출 도중 예외가 발생하면 503과 함께 휴리스틱 제안을 포함한 응답을 반환합니다.
+  - 요청이 유효하면 `ApiSuccessResponse.code` 200과 함께 Claude 응답 또는 휴리스틱 요약을 포함한 데이터를 반환합니다.
+  - Claude 호출 도중 예외가 발생하면 `ReviewServiceError`를 발생시키고, 라우터가 `ApiErrorResponse`(503)에 휴리스틱 요약과 사유를 담아 전달합니다.
 
 ## 3. API 입력 및 출력 구조
-- 출력 구조 (`ReviewResponse`):
+- 출력 구조 (`ApiSuccessResponse`):
   - `code`: HTTP 상태 코드 값 (예: 200, 503)
   - `message`: 처리 결과 메시지 (`"OK"`, `"Claude API 호출 실패"` 등)
   - `data`: 리뷰 결과
@@ -46,6 +46,11 @@
       - `confidence`: 0~1 사이 신뢰도
       - `status`: `pending` | `accepted` | `rejected`
     - `metrics`: `processingTimeMs`(원격 응답값 또는 처리 시간), `model`(원격 성공 시 Claude 모델명, 실패 시 `codex-heuristic-v1`)
+- 오류 구조 (`ApiErrorResponse`):
+  - `status`: 오류 유형 문자열 (예: `"BAD_REQUEST"`)
+  - `code`: HTTP 상태 코드 값 (예: 400)
+  - `message`: 사용자 대상 오류 설명 (휴리스틱 요약 포함 가능)
+  - `errors`: 필드 단위 오류 목록 (`field`, `message` 포함)
 
 ## 4. Fallback 및 예외 처리
 - 백업 휴리스틱 제안:
