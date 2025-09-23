@@ -1,11 +1,34 @@
-"""Top-level review response model."""
+"""API response wrappers for success and error payloads."""
+
+from __future__ import annotations
+
+from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict
-from codereview_agent.review.models.review_data import ReviewData
 
-class ReviewResponse(BaseModel):
+
+TData = TypeVar("TData")
+
+
+class ApiSuccessResponse(BaseModel, Generic[TData]):
+    code: int = 200
+    message: str = "OK"
+    data: TData
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class ApiErrorDetail(BaseModel):
+    field: str
+    message: str
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class ApiErrorResponse(BaseModel):
+    status: str
     code: int
     message: str
-    data: ReviewData
+    errors: list[ApiErrorDetail]
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)

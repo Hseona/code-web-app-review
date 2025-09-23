@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
-from codereview_agent.review.schemas import ReviewRequest
-from codereview_agent.review.service import ReviewService
+from codereview_agent.review.schemas import ApiSuccessResponse, ReviewRequest
+from codereview_agent.review.service import ReviewService, ReviewServiceError
 from .openapi_docs import build_review_request_schema
 
 router = APIRouter()
@@ -23,7 +23,7 @@ review_service = ReviewService()
         "requestBody": build_review_request_schema()
     },
 )
-async def request_code_review(raw_request: Request):
+async def request_code_review(raw_request: Request, response: Response):
     body_bytes = await raw_request.body()
     if not body_bytes:
         raise HTTPException(status_code=400, detail="요청 본문이 비어 있습니다.")
@@ -39,8 +39,13 @@ async def request_code_review(raw_request: Request):
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
 
-    response = review_service.generate_review(request)
-    return response.model_dump(by_alias=True)
+    try:
+        data = review_service.generate_review(request)
+    except ReviewServiceError as exc:
+        response.status_code = exc.response.code
+        return exc.response
+
+    return ApiSuccessResponse(data=data)
 
 
 def _load_payload(text: str) -> Optional[Dict[str, Any]]:

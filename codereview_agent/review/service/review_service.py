@@ -16,7 +16,11 @@ from codereview_agent.review.models import (
     SuggestionFix,
     SuggestionRange,
 )
-from codereview_agent.review.schemas import ReviewRequest, ReviewResponse
+from codereview_agent.review.schemas import (
+    ApiErrorDetail,
+    ApiErrorResponse,
+    ReviewRequest,
+)
 from codereview_agent.review.service.claude_client import (
     ClaudeReviewClient,
     ClaudeReviewError,
@@ -58,13 +62,22 @@ DEFAULT_LANGUAGE = "javascript"
 FALLBACK_MODEL_NAME = "codex-heuristic-v1"
 
 
+class ReviewServiceError(Exception):
+    """Raised when the review service cannot produce a successful result."""
+
+    def __init__(self, response: ApiErrorResponse, suggestions: Optional[List[Suggestion]] = None) -> None:
+        super().__init__(response.message)
+        self.response = response
+        self.suggestions: List[Suggestion] = suggestions or []
+
+
 class ReviewService:
     """Generates structured code review results via Claude integration with fallback heuristics."""
 
     def __init__(self, review_client: Optional[ClaudeReviewClient] = None) -> None:
         self._review_client = review_client
 
-    def generate_review(self, request: ReviewRequest) -> ReviewResponse:
+    def generate_review(self, request: ReviewRequest) -> ReviewData:
         start_time = time.perf_counter()
         style = self._normalize_style(request.style)
         language = self._resolve_language(request.language, request.code)
@@ -89,21 +102,20 @@ class ReviewService:
                 client=client,
                 started_at=start_time,
             )
-            return ReviewResponse(code=200, message="OK", data=data)
+            return data
         except ClaudeReviewError as exc:
             suggestions = self._collect_suggestions(request.code, style)
             fallback_summary = self._build_summary(style, language, suggestions)
-            summary = (
-                "Claude API 호출에 실패했습니다. 잠시 후 다시 시도해주세요. "
-                f"(사유: {exc.user_message}) 내부 휴리스틱 결과를 제공합니다. {fallback_summary}"
-            )
             processing_ms = int((time.perf_counter() - start_time) * 1000)
 
             data = ReviewData(
                 session_id=str(uuid4()),
                 original_code=request.code,
                 current_code=request.code,
-                summary=summary,
+                summary=(
+                    "Claude API 호출에 실패했습니다. 잠시 후 다시 시도해주세요. "
+                    f"(사유: {exc.user_message}) 내부 휴리스틱 결과를 제공합니다. {fallback_summary}"
+                ),
                 suggestions=suggestions,
                 metrics=ReviewMetrics(
                     processing_time_ms=processing_ms,
@@ -111,11 +123,16 @@ class ReviewService:
                 ),
             )
 
-            return ReviewResponse(
+            error = ApiErrorResponse(
+                status="SERVICE_UNAVAILABLE",
                 code=503,
-                message="Claude API 호출 실패",
-                data=data,
+                message=data.summary,
+                errors=[
+                    ApiErrorDetail(field="claude", message=exc.user_message),
+                ],
             )
+
+            raise ReviewServiceError(error, suggestions=suggestions) from exc
 
     # --- helpers -----------------------------------------------------------------
 
