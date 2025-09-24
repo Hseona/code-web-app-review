@@ -9,6 +9,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from codereview_agent.common import (
+    ErrorCode,
+    ErrorCodeException,
+    REMOTE_REVIEW_FAILURE_MESSAGE,
+)
 from codereview_agent.review.models import (
     ReviewData,
     ReviewMetrics,
@@ -16,11 +21,7 @@ from codereview_agent.review.models import (
     SuggestionFix,
     SuggestionRange,
 )
-from codereview_agent.review.schemas import (
-    ApiErrorDetail,
-    ApiErrorResponse,
-    ReviewRequest,
-)
+from codereview_agent.review.schemas import ReviewRequest
 from codereview_agent.review.service.claude_client import (
     ClaudeReviewClient,
     ClaudeReviewError,
@@ -59,16 +60,6 @@ STYLE_PROFILES = {
 
 DEFAULT_STYLE = "detail"
 DEFAULT_LANGUAGE = "javascript"
-FALLBACK_MODEL_NAME = "codex-heuristic-v1"
-
-
-class ReviewServiceError(Exception):
-    """Raised when the review service cannot produce a successful result."""
-
-    def __init__(self, response: ApiErrorResponse, suggestions: Optional[List[Suggestion]] = None) -> None:
-        super().__init__(response.message)
-        self.response = response
-        self.suggestions: List[Suggestion] = suggestions or []
 
 
 class ReviewService:
@@ -104,35 +95,11 @@ class ReviewService:
             )
             return data
         except ClaudeReviewError as exc:
-            suggestions = self._collect_suggestions(request.code, style)
-            fallback_summary = self._build_summary(style, language, suggestions)
-            processing_ms = int((time.perf_counter() - start_time) * 1000)
-
-            data = ReviewData(
-                session_id=str(uuid4()),
-                original_code=request.code,
-                current_code=request.code,
-                summary=(
-                    "Claude API 호출에 실패했습니다. 잠시 후 다시 시도해주세요. "
-                    f"(사유: {exc.user_message}) 내부 휴리스틱 결과를 제공합니다. {fallback_summary}"
-                ),
-                suggestions=suggestions,
-                metrics=ReviewMetrics(
-                    processing_time_ms=processing_ms,
-                    model=FALLBACK_MODEL_NAME,
-                ),
-            )
-
-            error = ApiErrorResponse(
-                status="SERVICE_UNAVAILABLE",
-                code=503,
-                message=data.summary,
-                errors=[
-                    ApiErrorDetail(field="claude", message=exc.user_message),
-                ],
-            )
-
-            raise ReviewServiceError(error, suggestions=suggestions) from exc
+            raise ErrorCodeException(
+                ErrorCode.SERVICE_UNAVAILABLE,
+                message=REMOTE_REVIEW_FAILURE_MESSAGE,
+                errors=[{"field": "claude", "message": exc.user_message}],
+            ) from exc
 
     # --- helpers -----------------------------------------------------------------
 

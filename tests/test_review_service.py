@@ -3,8 +3,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from codereview_agent.app.main import codeReviewAgent
+from codereview_agent.common import ErrorCode, ErrorCodeException
 from codereview_agent.review.schemas import ReviewRequest
-from codereview_agent.review.service import ReviewService, ReviewServiceError
+from codereview_agent.review.service import ReviewService
 from codereview_agent.review.service.claude_client import ClaudeReviewError
 
 
@@ -87,19 +88,12 @@ def test_generate_review_failure_returns_fallback_suggestions():
     code = """function compare(a, b) {\n  if (a == b) {\n    console.log('equal');\n  }\n}\n"""
     request = ReviewRequest(code=code, style="bug")
 
-    with pytest.raises(ReviewServiceError) as exc_info:
+    with pytest.raises(ErrorCodeException) as exc_info:
         service.generate_review(request)
-
-    error = exc_info.value.response
-    assert error.code == 503
+    error = exc_info.value
+    assert error.error_code is ErrorCode.SERVICE_UNAVAILABLE
     assert "내부 휴리스틱 결과" in error.message
-    assert [detail.model_dump() for detail in error.errors] == [
-        {"field": "claude", "message": "네트워크 오류"},
-    ]
-
-    titles = {suggestion.title for suggestion in exc_info.value.suggestions}
-    assert "동등 연산자 강화" in titles
-    assert "디버그 로그 정리" in titles
+    assert error.errors == [{"field": "claude", "message": "네트워크 오류"}]
 
 
 def test_generate_review_detects_typescript_language():

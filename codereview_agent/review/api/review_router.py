@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Request, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
+from codereview_agent.common.error_codes import ErrorCode
+from codereview_agent.common.exceptions import ErrorCodeException
 from codereview_agent.review.schemas import ApiSuccessResponse, ReviewRequest
-from codereview_agent.review.service import ReviewService, ReviewServiceError
+from codereview_agent.review.service import ReviewService
 from .openapi_docs import build_review_request_schema
 
 router = APIRouter()
@@ -26,25 +28,36 @@ review_service = ReviewService()
 async def request_code_review(raw_request: Request, response: Response):
     body_bytes = await raw_request.body()
     if not body_bytes:
-        raise HTTPException(status_code=400, detail="요청 본문이 비어 있습니다.")
+        raise ErrorCodeException(
+            ErrorCode.MISSING_ARGUMENT,
+            errors=[
+                {
+                    "field": "body",
+                    "message": ErrorCode.MISSING_ARGUMENT.message,
+                }
+            ],
+        )
 
     raw_text = body_bytes.decode("utf-8")
 
     payload = _load_payload(raw_text)
     if payload is None:
-        raise HTTPException(status_code=422, detail="요청 본문을 JSON으로 해석할 수 없습니다.")
+        raise ErrorCodeException(
+            ErrorCode.INVALID_ARGUMENT,
+            errors=[
+                {
+                    "field": "body",
+                    "message": ErrorCode.INVALID_ARGUMENT.message,
+                }
+            ],
+        )
 
     try:
         request = ReviewRequest.model_validate(payload)
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
 
-    try:
-        data = review_service.generate_review(request)
-    except ReviewServiceError as exc:
-        response.status_code = exc.response.code
-        return exc.response
-
+    data = review_service.generate_review(request)
     return ApiSuccessResponse(data=data)
 
 
@@ -63,7 +76,11 @@ def _load_payload(text: str) -> Optional[Dict[str, Any]]:
         if heuristic is not None:
             return heuristic
 
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise ErrorCodeException(
+            ErrorCode.INVALID_ARGUMENT,
+            message="요청 본문을 JSON으로 해석할 수 없습니다.",
+            errors=[{"field": "body", "message": ErrorCode.INVALID_ARGUMENT.message}],
+        ) from exc
 
 
 def _sanitize_control_chars(text: str) -> str:
