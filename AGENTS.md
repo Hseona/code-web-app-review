@@ -18,7 +18,7 @@
   - `ReviewService`가 스타일을 소문자화하고 기본값 `detail`을 적용하며 TypeScript 신호(`interface`, `: number` 등)를 우선 검사해 언어를 추론합니다.
   - 모델 입력 길이를 500자로 제한한 뒤 `ClaudeReviewClient`가 Claude 3 Haiku Messages API를 최대 3회까지 재시도하면서 호출합니다.
   - Claude 응답에서 제안·요약·메트릭을 정규화하고 누락된 `id`/`status` 필드를 보완하며, 요약이 비어 있으면 스타일 프로필을 기반으로 생성합니다.
-  - 원격 호출이 실패하면 사유를 담은 요약과 함께 휴리스틱 제안들을 제공하고, 메트릭의 모델명을 `codex-heuristic-v1`로 설정합니다.
+  - 원격 호출이 실패하면 공통 메시지 템플릿으로 휴리스틱 요약을 작성한 뒤 `ErrorCodeException(ErrorCode.SERVICE_UNAVAILABLE)`을 발생시켜 503 오류 응답으로 전달합니다.
 
 ## 2. 에이전트 동작 방식
 - 입력 구조:
@@ -27,7 +27,7 @@
   - `style`: 리뷰 스타일 프로필 (`bug` | `detail` | `refactor` | `test`)
 - 처리 로직:
   - 요청이 유효하면 `ApiSuccessResponse.code` 200과 함께 Claude 응답 또는 휴리스틱 요약을 포함한 데이터를 반환합니다.
-  - Claude 호출 도중 예외가 발생하면 `ReviewServiceError`를 발생시키고, 라우터가 `ApiErrorResponse`(503)에 휴리스틱 요약과 사유를 담아 전달합니다.
+  - Claude 호출 도중 예외가 발생하면 `ErrorCodeException`을 발생시키고, 전역 예외 핸들러가 `ApiErrorResponse`(503)에 휴리스틱 요약과 사유를 담아 전달합니다.
 
 ## 3. API 입력 및 출력 구조
 - 출력 구조 (`ApiSuccessResponse`):
@@ -45,7 +45,7 @@
       - `fixSnippet`: 적용 결과 스니펫
       - `confidence`: 0~1 사이 신뢰도
       - `status`: `pending` | `accepted` | `rejected`
-    - `metrics`: `processingTimeMs`(원격 응답값 또는 처리 시간), `model`(원격 성공 시 Claude 모델명, 실패 시 `codex-heuristic-v1`)
+    - `metrics`: `processingTimeMs`(원격 응답값 또는 처리 시간), `model`(성공 시 Claude 모델명; 오류 응답에는 포함되지 않음)
 - 오류 구조 (`ApiErrorResponse`):
   - `status`: 오류 유형 문자열 (예: `"BAD_REQUEST"`)
   - `code`: HTTP 상태 코드 값 (예: 400)
@@ -53,14 +53,15 @@
   - `errors`: 필드 단위 오류 목록 (`field`, `message` 포함)
 
 ## 4. Fallback 및 예외 처리
-- 백업 휴리스틱 제안:
+- 백업 휴리스틱 제안(오류 메시지와 내부 가이드에 활용):
   - `==`를 `===`로 치환하는 동등 연산자 강화
   - `console.log`를 주석 안내로 교체해 릴리스 시 로그를 정리하도록 권장
   - 설명이 없는 `TODO`에 세부 설명 추가 권장
   - 테스트 스타일 요청인데 테스트 코드 흔적이 없을 때 테스트 스캐폴드 추가 권장
 - 추가 메모:
   - 모든 원격 제안은 누락된 필드가 있으면 자동으로 채워집니다.
-  - 처리 시간은 Claude 응답 메트릭이 없을 경우 서비스 레벨에서 측정한 시간을 사용합니다.
+  - 오류 응답은 `ApiErrorResponse` 구조만 반환하며 메트릭은 성공 응답에서만 제공됩니다.
+  - 사용자 노출 메시지는 `codereview_agent.common.messages`에 정의된 템플릿을 사용해 하드코딩을 지양합니다.
   - 언어를 명시하지 않으면 자바스크립트를 기본값으로 사용합니다.
 
 ## 5. 개발 컨벤션
@@ -71,6 +72,7 @@
 - **타입 힌트**: 모든 함수에 타입 힌트를 작성하며, 테스트 코드에도 작성 권장
 - **형식 검사 도구**: black + mypy + ruff 적용
 - **환경 변수 관리**: `.env` 파일을 사용하며, `ClaudeSettings`를 통해 불러옴. 민감 정보는 Git에 커밋하지 않음
+- **하드코딩 지양**: 사용자 노출 메시지나 비즈니스 상수는 공통 모듈/설정에서 관리하고, 서비스 로직에서는 해당 상수를 참조만 합니다.
 
 ### 5.1 커밋 메시지 규칙
 
@@ -91,4 +93,4 @@
 
 - 기본 리뷰 모델: `claude-3-haiku-20240307`
 - 코드 길이 500자 이상일 경우 자동 truncate
-- Claude 호출 실패 시: fallback 모델 `codex-heuristic-v1` 사용
+- Claude 호출 실패 시: `ErrorCode.SERVICE_UNAVAILABLE` 오류 응답과 휴리스틱 요약을 반환

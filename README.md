@@ -16,8 +16,8 @@ AI 기반 코드 리뷰 자동화 백엔드 API 서비스입니다. 빠르고 �
 - POST `/api/reviews` 엔드포인트가 코드, 언어(선택), 리뷰 스타일을 받아 구조화된 리뷰 결과를 반환합니다.
 - 요청 본문이 줄바꿈이나 따옴표를 이스케이프하지 않아도 라우터가 JSON을 정규화하고 휴리스틱으로 파싱합니다.
 - `ReviewService`가 리뷰 스타일과 언어를 정규화하며 모델 입력을 500자로 제한해 Claude 3 Haiku 호출 안정성을 높입니다.
-- Claude 응답이 비어 있거나 오류가 발생하면 `==` → `===`, `console.log` 정리, 설명 없는 `TODO`, 테스트 스캐폴드 제안을 포함한 휴리스틱 백업을 제공합니다.
-- 모든 응답에 처리 시간과 사용된 모델명을 담은 `ReviewMetrics`가 포함됩니다.
+- Claude 응답이 비어 있거나 오류가 발생하면 휴리스틱 요약과 함께 `ErrorCodeException`을 발생시켜 일관된 `ApiErrorResponse`를 반환합니다.
+- 모든 성공 응답에는 처리 시간과 사용된 모델명을 담은 `ReviewMetrics`가 포함됩니다.
 
 ## 아키텍처 개요
 
@@ -25,11 +25,12 @@ AI 기반 코드 리뷰 자동화 백엔드 API 서비스입니다. 빠르고 �
 .
 ├── codereview_agent/
 │   ├── app/               FastAPI 애플리케이션 초기화와 CORS 설정 (`main.py`, `run.py`)
+│   ├── common/            공통 에러 코드, 응답 스키마, 예외 핸들러, 메시지 템플릿
 │   ├── review/
 │   │   ├── api/           `/api/reviews` 라우터, 본문 정규화, OpenAPI 문서
 │   │   ├── config.py      `.env` 기반 Claude 설정 로더
 │   │   ├── models/        응답 도메인 모델(`ReviewData`, `Suggestion`, `ReviewMetrics`)
-│   │   ├── schemas/       Pydantic 요청·응답 스키마(`ReviewRequest`, `ApiSuccessResponse`, `ApiErrorResponse`)
+│   │   ├── schemas/       Pydantic 요청 스키마(`ReviewRequest`)
 │   │   └── service/       Claude 연동 및 휴리스틱 백업 로직(`review_service.py`, `claude_client.py`)
 ├── tests/                 `ReviewService`와 라우터 회귀 테스트
 ├── pyproject.toml         Poetry 프로젝트 설정
@@ -43,7 +44,13 @@ AI 기반 코드 리뷰 자동화 백엔드 API 서비스입니다. 빠르고 �
 3. `ReviewRequest` 스키마가 입력을 검증하고 스타일/언어 값을 정규화합니다.
 4. `ReviewService`가 리뷰 스타일을 확정하고 간단한 패턴 매칭으로 언어를 추론하며, 모델 입력 코드를 최대 500자까지 잘라 `ClaudeReviewClient`에 전달합니다.
 5. Claude 호출이 성공하면 응답에서 요약·제안·메트릭을 정규화해 `ReviewData`로 변환하고, 누락된 요약은 스타일 프로필을 이용해 보완합니다.
-6. Claude 호출이 실패하면 사유를 포함한 요약과 휴리스틱 제안 목록을 만들어 503 응답과 함께 반환합니다.
+6. Claude 호출이 실패하면 공통 메시지 템플릿으로 휴리스틱 요약을 작성한 뒤 `ErrorCodeException(ErrorCode.SERVICE_UNAVAILABLE)`을 발생시켜 전역 예외 핸들러가 503 `ApiErrorResponse`로 변환합니다.
+
+## 오류 처리
+
+- 공통 오류 코드는 `codereview_agent.common.error_codes.ErrorCode` 열거형으로 관리하며, 서비스 레이어는 `ErrorCodeException`만 발생시킵니다.
+- `codereview_agent.common.exception_handlers.register_exception_handlers`가 FastAPI 앱에 등록돼 모든 예외를 `ApiErrorResponse` 구조로 직렬화합니다.
+- 사용자에게 노출되는 메시지는 `codereview_agent.common.messages`에 정의된 템플릿(`REMOTE_REVIEW_FAILURE_MESSAGE` 등)을 사용해 하드코딩을 지양합니다.
 
 ## 리뷰 스타일 프로필
 
