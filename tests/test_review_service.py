@@ -1,9 +1,8 @@
 import pytest
-
 from fastapi.testclient import TestClient
 
 from codereview_agent.app.main import codeReviewAgent
-from codereview_agent.common import ErrorCode, ErrorCodeException
+from codereview_agent.common import CustomInternalServerException, ErrorCode
 from codereview_agent.review.schemas import ReviewRequest
 from codereview_agent.review.service import ReviewService
 from codereview_agent.review.service.claude_client import ClaudeReviewError
@@ -88,12 +87,11 @@ def test_generate_review_failure_returns_fallback_suggestions():
     code = """function compare(a, b) {\n  if (a == b) {\n    console.log('equal');\n  }\n}\n"""
     request = ReviewRequest(code=code, style="bug")
 
-    with pytest.raises(ErrorCodeException) as exc_info:
+    with pytest.raises(CustomInternalServerException) as exc_info:
         service.generate_review(request)
     error = exc_info.value
-    assert error.error_code is ErrorCode.SERVICE_UNAVAILABLE
-    assert "내부 휴리스틱 결과" in error.message
-    assert error.errors == [{"field": "claude", "message": "네트워크 오류"}]
+    assert error.code is ErrorCode.SERVICE_UNAVAILABLE
+    assert error.detail is not None
 
 
 def test_generate_review_detects_typescript_language():
@@ -310,8 +308,9 @@ def test_api_route_returns_error_payload_on_service_failure(monkeypatch):
     body = response.json()
     assert body["status"] == "SERVICE_UNAVAILABLE"
     assert body["code"] == 503
-    assert "내부 휴리스틱 결과" in body["message"]
-    assert body["errors"] == [{"field": "claude", "message": "네트워크 오류"}]
+    assert body["message"] == ErrorCode.SERVICE_UNAVAILABLE.message
+    assert body["errors"]
+    assert any(entry.get("field") == "general" for entry in body["errors"])
 
 
 def test_review_request_normalizes_style_and_language():

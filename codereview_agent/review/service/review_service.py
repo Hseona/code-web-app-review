@@ -10,8 +10,8 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from codereview_agent.common import (
+    CustomInternalServerException,
     ErrorCode,
-    ErrorCodeException,
     REMOTE_REVIEW_FAILURE_MESSAGE,
 )
 from codereview_agent.review.models import (
@@ -95,10 +95,15 @@ class ReviewService:
             )
             return data
         except ClaudeReviewError as exc:
-            raise ErrorCodeException(
+            suggestions = self._collect_suggestions(request.code, style)
+            fallback_summary = self._build_summary(style, language, suggestions)
+            error_context = REMOTE_REVIEW_FAILURE_MESSAGE.format(
+                reason=exc.user_message,
+                summary=fallback_summary,
+            )
+            raise CustomInternalServerException(
                 ErrorCode.SERVICE_UNAVAILABLE,
-                message=REMOTE_REVIEW_FAILURE_MESSAGE,
-                errors=[{"field": "claude", "message": exc.user_message}],
+                detail=error_context,
             ) from exc
 
     # --- helpers -----------------------------------------------------------------

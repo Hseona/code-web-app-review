@@ -4,23 +4,19 @@ from __future__ import annotations
 
 from typing import Iterable, Sequence
 
-from codereview_agent.common.error_codes import ErrorCode
-from codereview_agent.common.response import ApiErrorDetail
+from codereview_agent.common.exception.error_codes import ErrorCode
 
 
 class ErrorCodeException(Exception):
-    """Exception carrying an ErrorCode and optional validation details."""
+    """Exception carrying an ErrorCode with optional error entries."""
 
     def __init__(
         self,
         error_code: ErrorCode,
         *,
+
         message: str | None = None,
-        errors: Sequence[ApiErrorDetail]
-        | Iterable[ApiErrorDetail]
-        | Sequence[dict[str, str]]
-        | Iterable[dict[str, str]]
-        | None = None,
+        errors: Sequence[object] | Iterable[object] | None = None,
     ) -> None:
         self.error_code = error_code
         self.message = message or error_code.message

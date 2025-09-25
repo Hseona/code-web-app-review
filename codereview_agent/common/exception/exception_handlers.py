@@ -10,8 +10,11 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from codereview_agent.common.error_codes import ErrorCode
-from codereview_agent.common.exceptions import ErrorCodeException
+from codereview_agent.common.exception.custom_internal_server_exception import (
+    CustomInternalServerException,
+)
+from codereview_agent.common.exception.error_codes import ErrorCode
+from codereview_agent.common.exception.exceptions import ErrorCodeException
 from codereview_agent.common.response import ApiErrorDetail, ApiErrorResponse
 
 _GENERAL_FIELD = "general"
@@ -20,14 +23,30 @@ _GENERAL_FIELD = "general"
 def register_exception_handlers(app: FastAPI) -> None:
     """Register exception handlers mirroring the Spring configuration."""
 
+    @app.exception_handler(CustomInternalServerException)
+    async def handle_custom_internal_server_exception(
+        request: Request, exc: CustomInternalServerException
+    ) -> JSONResponse:
+        detail = exc.detail or exc.code.message
+        response = ApiErrorResponse.from_error_code(
+            exc.code,
+            message=exc.code.message,
+            errors=_build_general_error(detail),
+        )
+        return JSONResponse(
+            status_code=exc.code.status_code,
+            content=response.model_dump(),
+        )
+
     @app.exception_handler(ErrorCodeException)
     async def handle_error_code_exception(
         request: Request, exc: ErrorCodeException
     ) -> JSONResponse:
+        errors = _ensure_details(exc.errors) if exc.errors else []
         response = ApiErrorResponse.from_error_code(
             exc.error_code,
             message=exc.message,
-            errors=_ensure_details(exc.errors),
+            errors=errors or _build_general_error(exc.message),
         )
         return JSONResponse(
             status_code=exc.error_code.status_code,
@@ -71,7 +90,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         details = (
             exc.detail.get("errors")
             if isinstance(exc.detail, dict) and exc.detail.get("errors")
-            else _build_error_details(detail_message)
+            else _build_general_error(detail_message)
         )
         response = ApiErrorResponse.from_error_code(
             error_code,
@@ -91,7 +110,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         response = ApiErrorResponse.from_error_code(
             error_code,
             message=error_code.message,
-            errors=_build_error_details(str(exc) or error_code.message),
+            errors=_build_general_error(str(exc) or error_code.message),
         )
         return JSONResponse(
             status_code=error_code.status_code,
@@ -114,7 +133,7 @@ def _format_location(location: Sequence[object]) -> str:
     return ".".join(filtered) if filtered else _GENERAL_FIELD
 
 
-def _build_error_details(message: str) -> list[ApiErrorDetail]:
+def _build_general_error(message: str) -> list[ApiErrorDetail]:
     return [ApiErrorDetail(field=_GENERAL_FIELD, message=message)]
 
 

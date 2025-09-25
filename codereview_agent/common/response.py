@@ -6,7 +6,7 @@ from typing import Generic, Iterable, Sequence, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from codereview_agent.common.error_codes import ErrorCode
+from codereview_agent.common.exception.error_codes import ErrorCode
 
 TData = TypeVar("TData")
 
