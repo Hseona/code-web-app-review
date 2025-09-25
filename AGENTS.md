@@ -18,7 +18,7 @@
   - `ReviewService`가 스타일을 소문자화하고 기본값 `detail`을 적용하며 TypeScript 신호(`interface`, `: number` 등)를 우선 검사해 언어를 추론합니다.
   - 모델 입력 길이를 500자로 제한한 뒤 `ClaudeReviewClient`가 Claude 3 Haiku Messages API를 최대 3회까지 재시도하면서 호출합니다.
   - Claude 응답에서 제안·요약·메트릭을 정규화하고 누락된 `id`/`status` 필드를 보완하며, 요약이 비어 있으면 스타일 프로필을 기반으로 생성합니다.
-  - 원격 호출이 실패하면 공통 메시지 템플릿으로 휴리스틱 요약을 작성한 뒤 `ErrorCodeException(ErrorCode.SERVICE_UNAVAILABLE)`을 발생시켜 503 오류 응답으로 전달합니다.
+  - 원격 호출이 실패하면 공통 메시지 템플릿으로 휴리스틱 요약을 작성한 뒤 `CustomInternalServerException(ErrorCode.SERVICE_UNAVAILABLE)`을 발생시켜 503 오류 응답으로 전달합니다.
 
 ## 2. 에이전트 동작 방식
 - 입력 구조:
@@ -27,30 +27,54 @@
   - `style`: 리뷰 스타일 프로필 (`bug` | `detail` | `refactor` | `test`)
 - 처리 로직:
   - 요청이 유효하면 `ApiSuccessResponse.code` 200과 함께 Claude 응답 또는 휴리스틱 요약을 포함한 데이터를 반환합니다.
-  - Claude 호출 도중 예외가 발생하면 `ErrorCodeException`을 발생시키고, 전역 예외 핸들러가 `ApiErrorResponse`(503)에 휴리스틱 요약과 사유를 담아 전달합니다.
+  - Claude 호출 도중 예외가 발생하면 도메인 예외(`CustomInternalServerException` 등)를 발생시키고, 전역 예외 핸들러가 `ApiErrorResponse`(503)에 휴리스틱 요약과 사유를 담아 전달합니다.
 
 ## 3. API 입력 및 출력 구조
-- 출력 구조 (`ApiSuccessResponse`):
-  - `code`: HTTP 상태 코드 값 (예: 200, 503)
-  - `message`: 처리 결과 메시지 (`"OK"`, `"Claude API 호출 실패"` 등)
-  - `data`: 리뷰 결과
-    - `sessionId`: 리뷰 세션 고유 ID (UUID)
-    - `originalCode`: 입력 코드 원문
-    - `currentCode`: 제안 적용 전 코드 (초기에는 원문과 동일)
-    - `summary`: 스타일 프로필과 언어 관점의 리뷰 요약 (Claude 응답 또는 자동 생성)
-    - `suggestions`: 제안 리스트
-      - `id`, `title`, `rationale`, `severity`, `tags`
-      - `range`: `startLine`, `startCol`, `endLine`, `endCol`
-      - `fix`: `type`(예: `unified-diff`), `diff`
-      - `fixSnippet`: 적용 결과 스니펫
-      - `confidence`: 0~1 사이 신뢰도
-      - `status`: `pending` | `accepted` | `rejected`
-    - `metrics`: `processingTimeMs`(원격 응답값 또는 처리 시간), `model`(성공 시 Claude 모델명; 오류 응답에는 포함되지 않음)
-- 오류 구조 (`ApiErrorResponse`):
-  - `status`: 오류 유형 문자열 (예: `"BAD_REQUEST"`)
-  - `code`: HTTP 상태 코드 값 (예: 400)
+- 성공 구조 (`ApiSuccessResponse`):
+  - `code`: HTTP 상태 코드 값 (예: 200)
+  - `message`: 처리 결과 메시지 (`"OK"` 등)
+  - `data`: 객체 또는 리스트 형태의 결과 컨테이너
+    - 객체(`dict`)일 경우: `sessionId`, `originalCode`, `currentCode`, `summary`, `suggestions`, `metrics`
+    - 리스트(`list`)일 경우: 제안 배열/히스토리 목록 등 비어 있거나 다수의 엔트리를 포함
+- 실패 구조 (`ApiErrorResponse`):
+  - `status`: 오류 유형 문자열 (예: `"BAD_REQUEST"`, `"SERVICE_UNAVAILABLE"`)
+  - `code`: HTTP 상태 코드 값 (예: 400, 503)
   - `message`: 사용자 대상 오류 설명 (휴리스틱 요약 포함 가능)
   - `errors`: 필드 단위 오류 목록 (`field`, `message` 포함)
+
+### 성공 응답 예시
+
+```json
+// object
+{
+  "code": 200,
+  "message": "OK",
+  "data": {}
+}
+
+// list
+{
+  "code": 200,
+  "message": "OK",
+  "data": []
+}
+```
+
+### 실패 응답 예시
+
+```json
+{
+  "status": "BAD_REQUEST",
+  "code": 400,
+  "message": "필수값이 누락 되었거나 요청 형식이 유효하지 않습니다.",
+  "errors": [
+    {
+      "field": "userId",
+      "message": "userId는 필수값입니다."
+    }
+  ]
+}
+```
 
 ## 4. Fallback 및 예외 처리
 - 백업 휴리스틱 제안(오류 메시지와 내부 가이드에 활용):

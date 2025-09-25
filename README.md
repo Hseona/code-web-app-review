@@ -16,7 +16,7 @@ AI 기반 코드 리뷰 자동화 백엔드 API 서비스입니다. 빠르고 �
 - POST `/api/reviews` 엔드포인트가 코드, 언어(선택), 리뷰 스타일을 받아 구조화된 리뷰 결과를 반환합니다.
 - 요청 본문이 줄바꿈이나 따옴표를 이스케이프하지 않아도 라우터가 JSON을 정규화하고 휴리스틱으로 파싱합니다.
 - `ReviewService`가 리뷰 스타일과 언어를 정규화하며 모델 입력을 500자로 제한해 Claude 3 Haiku 호출 안정성을 높입니다.
-- Claude 응답이 비어 있거나 오류가 발생하면 휴리스틱 요약과 함께 `ErrorCodeException`을 발생시켜 일관된 `ApiErrorResponse`를 반환합니다.
+- Claude 응답이 비어 있거나 오류가 발생하면 휴리스틱 요약을 남기고 `CustomInternalServerException`(기반 ErrorCode)을 발생시켜 일관된 `ApiErrorResponse`를 반환합니다.
 - 모든 성공 응답에는 처리 시간과 사용된 모델명을 담은 `ReviewMetrics`가 포함됩니다.
 
 ## 아키텍처 개요
@@ -44,13 +44,10 @@ AI 기반 코드 리뷰 자동화 백엔드 API 서비스입니다. 빠르고 �
 3. `ReviewRequest` 스키마가 입력을 검증하고 스타일/언어 값을 정규화합니다.
 4. `ReviewService`가 리뷰 스타일을 확정하고 간단한 패턴 매칭으로 언어를 추론하며, 모델 입력 코드를 최대 500자까지 잘라 `ClaudeReviewClient`에 전달합니다.
 5. Claude 호출이 성공하면 응답에서 요약·제안·메트릭을 정규화해 `ReviewData`로 변환하고, 누락된 요약은 스타일 프로필을 이용해 보완합니다.
-6. Claude 호출이 실패하면 공통 메시지 템플릿으로 휴리스틱 요약을 작성한 뒤 `ErrorCodeException(ErrorCode.SERVICE_UNAVAILABLE)`을 발생시켜 전역 예외 핸들러가 503 `ApiErrorResponse`로 변환합니다.
+6. Claude 호출이 실패하면 공통 메시지 템플릿으로 휴리스틱 요약을 작성한 뒤 `CustomInternalServerException(ErrorCode.SERVICE_UNAVAILABLE)`을 발생시켜 전역 예외 핸들러가 503 `ApiErrorResponse`로 변환합니다.
 
-## 오류 처리
-
-- 공통 오류 코드는 `codereview_agent.common.error_codes.ErrorCode` 열거형으로 관리하며, 서비스 레이어는 `ErrorCodeException`만 발생시킵니다.
-- `codereview_agent.common.exception_handlers.register_exception_handlers`가 FastAPI 앱에 등록돼 모든 예외를 `ApiErrorResponse` 구조로 직렬화합니다.
-- 사용자에게 노출되는 메시지는 `codereview_agent.common.messages`에 정의된 템플릿(`REMOTE_REVIEW_FAILURE_MESSAGE` 등)을 사용해 하드코딩을 지양합니다.
+- 서비스 레이어는 `CustomInternalServerException`, `ErrorCodeException` 등 공통 예외를 통해 일관된 오류 응답을 생성하며, 전역 예외 핸들러가 `ApiErrorResponse` 구조로 직렬화합니다.
+- `CustomInternalServerException`은 `ErrorCode`와 내부 상세 메시지를 함께 보존해 운영자용 오류 컨텍스트(`errors` 필드)를 전달합니다.
 
 ## 리뷰 스타일 프로필
 
@@ -84,15 +81,7 @@ poetry run pytest
 
 ## API 예시
 
-### POST `/api/reviews`
-
-```json
-{
-  "code": "function sum(a, b) {\n  return a + b;\n }",
-  "language": "javascript",
-  "style": "bug"
-}
-```
+### 성공 응답 (객체 데이터)
 
 ```json
 {
@@ -103,26 +92,38 @@ poetry run pytest
     "originalCode": "...",
     "currentCode": "...",
     "summary": "...",
-    "suggestions": [
-      {
-        "id": "uuid",
-        "title": "동등 연산자 강화",
-        "severity": "major",
-        "tags": ["bug", "best-practice"],
-        "range": {
-          "startLine": 1,
-          "startCol": 10,
-          "endLine": 1,
-          "endCol": 12
-        },
-        "fix": { "type": "unified-diff", "diff": "..." }
-      }
-    ],
+    "suggestions": [],
     "metrics": {
       "processingTimeMs": 42,
       "model": "claude-3-haiku-20240307"
     }
   }
+}
+```
+
+### 성공 응답 (리스트 데이터)
+
+```json
+{
+  "code": 200,
+  "message": "OK",
+  "data": []
+}
+```
+
+### 실패 응답
+
+```json
+{
+  "status": "BAD_REQUEST",
+  "code": 400,
+  "message": "필수값이 누락 되었거나 요청 형식이 유효하지 않습니다.",
+  "errors": [
+    {
+      "field": "userId",
+      "message": "userId는 필수값입니다."
+    }
+  ]
 }
 ```
 
