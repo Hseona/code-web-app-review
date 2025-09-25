@@ -7,14 +7,14 @@ class SuggestionRange(BaseModel):
     end_line: int = Field(alias="endLine")
     end_col: int = Field(alias="endCol")
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 
 class SuggestionFix(BaseModel):
     type: str
     diff: str
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 
 class Suggestion(BaseModel):
@@ -29,4 +29,4 @@ class Suggestion(BaseModel):
     confidence: float
     status: str
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)

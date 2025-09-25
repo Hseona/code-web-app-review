@@ -12,4 +12,4 @@ class ReviewData(BaseModel):
     suggestions: list[Suggestion]
     metrics: ReviewMetrics
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)

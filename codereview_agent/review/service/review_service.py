@@ -9,6 +9,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from codereview_agent.common import (
+    CustomInternalServerException,
+    ErrorCode,
+    REMOTE_REVIEW_FAILURE_MESSAGE,
+)
 from codereview_agent.review.models import (
     ReviewData,
     ReviewMetrics,
@@ -16,7 +21,7 @@ from codereview_agent.review.models import (
     SuggestionFix,
     SuggestionRange,
 )
-from codereview_agent.review.schemas import ReviewRequest, ReviewResponse
+from codereview_agent.review.schemas import ReviewRequest
 from codereview_agent.review.service.claude_client import (
     ClaudeReviewClient,
     ClaudeReviewError,
@@ -55,7 +60,6 @@ STYLE_PROFILES = {
 
 DEFAULT_STYLE = "detail"
 DEFAULT_LANGUAGE = "javascript"
-FALLBACK_MODEL_NAME = "codex-heuristic-v1"
 
 
 class ReviewService:
@@ -64,7 +68,7 @@ class ReviewService:
     def __init__(self, review_client: Optional[ClaudeReviewClient] = None) -> None:
         self._review_client = review_client
 
-    def generate_review(self, request: ReviewRequest) -> ReviewResponse:
+    def generate_review(self, request: ReviewRequest) -> ReviewData:
         start_time = time.perf_counter()
         style = self._normalize_style(request.style)
         language = self._resolve_language(request.language, request.code)
@@ -89,33 +93,18 @@ class ReviewService:
                 client=client,
                 started_at=start_time,
             )
-            return ReviewResponse(code=200, message="OK", data=data)
+            return data
         except ClaudeReviewError as exc:
             suggestions = self._collect_suggestions(request.code, style)
             fallback_summary = self._build_summary(style, language, suggestions)
-            summary = (
-                "Claude API 호출에 실패했습니다. 잠시 후 다시 시도해주세요. "
-                f"(사유: {exc.user_message}) 내부 휴리스틱 결과를 제공합니다. {fallback_summary}"
+            error_context = REMOTE_REVIEW_FAILURE_MESSAGE.format(
+                reason=exc.user_message,
+                summary=fallback_summary,
             )
-            processing_ms = int((time.perf_counter() - start_time) * 1000)
-
-            data = ReviewData(
-                session_id=str(uuid4()),
-                original_code=request.code,
-                current_code=request.code,
-                summary=summary,
-                suggestions=suggestions,
-                metrics=ReviewMetrics(
-                    processing_time_ms=processing_ms,
-                    model=FALLBACK_MODEL_NAME,
-                ),
-            )
-
-            return ReviewResponse(
-                code=503,
-                message="Claude API 호출 실패",
-                data=data,
-            )
+            raise CustomInternalServerException(
+                ErrorCode.SERVICE_UNAVAILABLE,
+                detail=error_context,
+            ) from exc
 
     # --- helpers -----------------------------------------------------------------
 

@@ -1,12 +1,11 @@
 import pytest
-
 from fastapi.testclient import TestClient
 
 from codereview_agent.app.main import codeReviewAgent
+from codereview_agent.common import CustomInternalServerException, ErrorCode
 from codereview_agent.review.schemas import ReviewRequest
 from codereview_agent.review.service import ReviewService
 from codereview_agent.review.service.claude_client import ClaudeReviewError
-from codereview_agent.review.service.review_service import FALLBACK_MODEL_NAME
 
 
 class RecordingClaudeClient:
@@ -70,14 +69,12 @@ def test_generate_review_success_uses_remote_payload():
     code = """function sum(a, b) {\n  return a + b;\n}\n"""
     request = ReviewRequest(code=code, style="bug")
 
-    response = service.generate_review(request)
+    data = service.generate_review(request)
 
-    assert response.code == 200
-    assert response.message == "OK"
-    assert response.data.summary == "Remote review summary"
-    assert response.data.metrics.model == client.model_name
-    assert response.data.metrics.processing_time_ms == 42
-    assert len(response.data.suggestions) == 1
+    assert data.summary == "Remote review summary"
+    assert data.metrics.model == client.model_name
+    assert data.metrics.processing_time_ms == 42
+    assert len(data.suggestions) == 1
     assert client.calls and client.calls[0]["language"] == "javascript"
     assert client.calls[0]["style"] == "bug"
     assert client.calls[0]["code"] == code
@@ -90,16 +87,11 @@ def test_generate_review_failure_returns_fallback_suggestions():
     code = """function compare(a, b) {\n  if (a == b) {\n    console.log('equal');\n  }\n}\n"""
     request = ReviewRequest(code=code, style="bug")
 
-    response = service.generate_review(request)
-
-    assert response.code == 503
-    assert response.message == "Claude API 호출 실패"
-    assert "내부 휴리스틱 결과" in response.data.summary
-    assert response.data.metrics.model == FALLBACK_MODEL_NAME
-
-    titles = {suggestion.title for suggestion in response.data.suggestions}
-    assert "동등 연산자 강화" in titles
-    assert "디버그 로그 정리" in titles
+    with pytest.raises(CustomInternalServerException) as exc_info:
+        service.generate_review(request)
+    error = exc_info.value
+    assert error.code is ErrorCode.SERVICE_UNAVAILABLE
+    assert error.detail is not None
 
 
 def test_generate_review_detects_typescript_language():
@@ -109,13 +101,12 @@ def test_generate_review_detects_typescript_language():
     code = """interface User {\n  id: number;\n  name: string;\n}\n"""
     request = ReviewRequest(code=code)
 
-    response = service.generate_review(request)
+    data = service.generate_review(request)
 
-    assert response.code == 200
-    assert response.data.summary == "TYPESCRIPT remote summary"
+    assert data.summary == "TYPESCRIPT remote summary"
     assert client.last_call == {"language": "typescript", "style": "detail", "code": code}
-    assert response.data.metrics.model == client.model_name
-    assert response.data.suggestions == []
+    assert data.metrics.model == client.model_name
+    assert data.suggestions == []
 
 
 def test_generate_review_truncates_code_for_remote_payload():
@@ -137,9 +128,8 @@ def test_generate_review_truncates_code_for_remote_payload():
     request = ReviewRequest(code=long_code)
     service = ReviewService(review_client=RecordingClient())
 
-    response = service.generate_review(request)
+    service.generate_review(request)
 
-    assert response.code == 200
     assert len(service._review_client.last_code) == 500
     assert service._review_client.last_code == long_code[:500]
 
@@ -231,7 +221,7 @@ def test_api_route_handles_unescaped_quotes_and_newlines(monkeypatch):
 
     client = TestClient(codeReviewAgent)
     raw_payload = '''{
-  "code": "def generate_review(self, request: ReviewRequest) -> ReviewResponse:
+  "code": "def generate_review(self, request: ReviewRequest) -> ApiSuccessResponse[ReviewData]:
         start_time = time.perf_counter()
         style = self._normalize_style(request.style)
         language = self._resolve_language(request.language, request.code)
@@ -253,7 +243,7 @@ def test_api_route_handles_unescaped_quotes_and_newlines(monkeypatch):
                 client=client,
                 started_at=start_time,
             )
-            return ReviewResponse(code=200, message="OK", data=data)
+            return ApiSuccessResponse[ReviewData](code=200, message="OK", data=data)
         except ClaudeReviewError as exc:
             suggestions = self._collect_suggestions(request.code, style)
             fallback_summary = self._build_summary(style, language, suggestions)
@@ -275,7 +265,7 @@ def test_api_route_handles_unescaped_quotes_and_newlines(monkeypatch):
                 ),
             )
 
-            return ReviewResponse(
+            return ApiSuccessResponse[ReviewData](
                 code=503,
                 message="Claude API 호출 실패",
                 data=data,
@@ -293,6 +283,34 @@ def test_api_route_handles_unescaped_quotes_and_newlines(monkeypatch):
     assert response.status_code == 200
     assert response.json()["code"] == 200
     # assert 'message = "Hello, " + name + "!"' in service._review_client.last_code
+
+
+def test_api_route_returns_error_payload_on_service_failure(monkeypatch):
+    class FailingClient:
+        model_name = "claude-3-haiku-20240307"
+
+        def create_review(self, request, *, language: str, style: str, code: str):  # noqa: ARG002
+            raise ClaudeReviewError("네트워크 오류")
+
+    service = ReviewService(review_client=FailingClient())
+    monkeypatch.setattr("codereview_agent.review.api.review_router.review_service", service)
+
+    client = TestClient(codeReviewAgent)
+    payload = {
+        "code": "function test() { return 1 }",
+        "language": "javascript",
+        "style": "bug",
+    }
+
+    response = client.post("/api/reviews", json=payload)
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "SERVICE_UNAVAILABLE"
+    assert body["code"] == 503
+    assert body["message"] == ErrorCode.SERVICE_UNAVAILABLE.message
+    assert body["errors"]
+    assert any(entry.get("field") == "general" for entry in body["errors"])
 
 
 def test_review_request_normalizes_style_and_language():
