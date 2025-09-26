@@ -36,6 +36,9 @@ AI 기반 코드 리뷰 자동화 백엔드 API 서비스입니다. 빠르고 �
 ├── pyproject.toml         Poetry 프로젝트 설정
 └── test_main.http         HTTP 요청 시나리오 예시
 ```
+### 서비스 실행 흐름도
+다음은 `/api/reviews` 요청이 들어왔을 때 FastAPI 서비스가 처리하는 전체 시퀀스입니다
+![Project workflow Mermaid](/docs/mermaid-diagram-2025-09-26-174912.png)
 
 ## 리뷰 워크플로우
 
