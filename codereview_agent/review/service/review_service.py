@@ -15,13 +15,12 @@ from codereview_agent.common import (
     REMOTE_REVIEW_FAILURE_MESSAGE,
 )
 from codereview_agent.review.models import (
-    ReviewData,
     ReviewMetrics,
     Suggestion,
     SuggestionFix,
     SuggestionRange,
 )
-from codereview_agent.review.schemas import ReviewRequest
+from codereview_agent.review.schemas import ReviewRequest, ReviewResponse
 from codereview_agent.review.service.claude_client import (
     ClaudeReviewClient,
     ClaudeReviewError,
@@ -68,7 +67,7 @@ class ReviewService:
     def __init__(self, review_client: Optional[ClaudeReviewClient] = None) -> None:
         self._review_client = review_client
 
-    def generate_review(self, request: ReviewRequest) -> ReviewData:
+    def generate_review(self, request: ReviewRequest) -> ReviewResponse:
         start_time = time.perf_counter()
         style = self._normalize_style(request.style)
         language = self._resolve_language(request.language, request.code)
@@ -117,7 +116,7 @@ class ReviewService:
         remote_payload: dict,
         client: ClaudeReviewClient,
         started_at: float,
-    ) -> ReviewData:
+    ) -> ReviewResponse:
         remote_suggestions = remote_payload.get("suggestions")
         suggestions = self._normalize_remote_suggestions(remote_suggestions)
 
@@ -145,7 +144,7 @@ class ReviewService:
         if not model_name:
             model_name = client.model_name
 
-        return ReviewData(
+        return ReviewResponse(
             session_id=str(uuid4()),
             original_code=request.code,
             current_code=request.code,
