@@ -60,15 +60,14 @@ Notes:
 - Use the exact field names and types above.
 - `suggestions` must be a flat array of suggestion objects.
 - All suggestion objects must include a unique `id`, a `rationale`, and a `range`.
-- `currentCode` must contain the improved code after applying every recommendation you consider necessary. If no changes are needed, repeat the original code verbatim.
-- Whenever you identify a bug, crash, or incorrect behavior, update `currentCode` with the exact fix that resolves the issue and ensures the program runs safely.
 - If any value is missing, return a default: empty string (`""`) or empty array (`[]`) or `null`, but do not omit the field.
 - `status` is always `"pending"` by default.
 - Set `confidence` to a float between 0.0 and 1.0, e.g. `0.85`.
 - `fix.type` must always be `"unified-diff"` even if diff is empty.
 - Include all fields even if the suggestion is minimal.
-- Your output must be a valid JSON object, without commentary or explanation.
-- Do not wrap the JSON in Markdown or any prose."""
+- Your output must be a **valid JSON object**, without commentary or explanation.
+
+Do not wrap the JSON in Markdown or any prose."""
 
 class ClaudeReviewError(Exception):
     """Raised when Claude API integration fails."""
@@ -226,19 +225,15 @@ class ClaudeReviewClient:
             message = f"Claude API HTTP 오류 {exc.code}"
             if error_body:
                 message = f"{message}: {error_body}"
-            logger.error("Claude API HTTP 오류 %s: %s", exc.code, error_body)
             raise ClaudeReviewError(message, status_code=exc.code, cause=exc) from exc
         except URLError as exc:  # pragma: no cover - network failure handling
-            logger.error("Claude API 네트워크 오류: %s", exc)
             raise ClaudeReviewError("Claude API 네트워크 오류", cause=exc) from exc
         except Exception as exc:  # pragma: no cover - defensive catch-all
-            logger.exception("Claude API 호출 중 알 수 없는 오류")
             raise ClaudeReviewError("Claude API 호출 중 알 수 없는 오류가 발생했습니다.", cause=exc) from exc
 
         try:
             envelope = json.loads(raw_body)
         except json.JSONDecodeError as exc:
-            logger.error("Claude API 응답 파싱 실패. 원문: %s", raw_body)
             raise ClaudeReviewError("Claude API 응답을 JSON으로 파싱할 수 없습니다.", cause=exc) from exc
 
         return self._extract_review_payload(envelope)
@@ -262,7 +257,6 @@ class ClaudeReviewClient:
         try:
             payload = json.loads(cleaned)
         except json.JSONDecodeError as exc:
-            logger.error("Claude API 응답 JSON 파싱 실패. 정제된 원문: %s", cleaned)
             raise ClaudeReviewError("Claude API 응답 JSON 형식이 올바르지 않습니다.", cause=exc) from exc
 
         if "data" in payload and isinstance(payload["data"], dict):
