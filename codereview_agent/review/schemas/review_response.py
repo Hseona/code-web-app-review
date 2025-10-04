@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from codereview_agent.review.models.review_metrics import ReviewMetrics
 from codereview_agent.review.models.suggestion import Suggestion
 
-class ReviewData(BaseModel):
+class ReviewResponse(BaseModel):
     session_id: str = Field(alias="sessionId")
     original_code: str = Field(alias="originalCode")
     current_code: str = Field(alias="currentCode")

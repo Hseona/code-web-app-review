@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any, Dict, Optional, TYPE_CHECKING
 from urllib.error import HTTPError, URLError
@@ -13,6 +14,60 @@ if TYPE_CHECKING:  # pragma: no cover - type checking helper
     from codereview_agent.review.schemas import ReviewRequest
 
 from codereview_agent.review.config import get_settings
+
+
+logger = logging.getLogger(__name__)
+
+
+REVIEW_PROMPT_INSTRUCTIONS = """You are a code review assistant that returns structured JSON responses.
+
+Your response must strictly follow this schema:
+
+{
+  "sessionId": string,
+  "originalCode": string,
+  "currentCode": string,
+  "summary": string,
+  "suggestions": [
+    {
+      "id": string,
+      "title": string,
+      "rationale": string,
+      "severity": "info" | "minor" | "major" | "critical",
+      "tags": string[],
+      "range": {
+        "startLine": number,
+        "startCol": number,
+        "endLine": number,
+        "endCol": number
+      },
+      "fix": {
+        "type": "unified-diff",
+        "diff": string
+      },
+      "fixSnippet": string,
+      "confidence": number,
+      "status": "pending"
+    }
+  ],
+  "metrics": {
+    "processingTimeMs": number,
+    "model": string
+  }
+}
+
+Notes:
+- Use the exact field names and types above.
+- `suggestions` must be a flat array of suggestion objects.
+- All suggestion objects must include a unique `id`, a `rationale`, and a `range`.
+- If any value is missing, return a default: empty string (`""`) or empty array (`[]`) or `null`, but do not omit the field.
+- `status` is always `"pending"` by default.
+- Set `confidence` to a float between 0.0 and 1.0, e.g. `0.85`.
+- `fix.type` must always be `"unified-diff"` even if diff is empty.
+- Include all fields even if the suggestion is minimal.
+- Your output must be a **valid JSON object**, without commentary or explanation.
+
+Do not wrap the JSON in Markdown or any prose."""
 
 class ClaudeReviewError(Exception):
     """Raised when Claude API integration fails."""
@@ -117,10 +172,8 @@ class ClaudeReviewClient:
             "style": style,
         }
         user_prompt_lines = [
-            "Produce a concise code review as JSON with keys 'summary', 'suggestions', and 'metrics'.",
-            "Each suggestion must include id, title, rationale, severity, tags, range(startLine,startCol,endLine,endCol),",
-            "fix(type,diff), fixSnippet, confidence, status. Return JSON only with no extra narration.",
-            "Follow the requested language and tone strictly.",
+            REVIEW_PROMPT_INSTRUCTIONS,
+            "",
             "Review request context:",
             json.dumps(request_snapshot, ensure_ascii=True, indent=2),
             "Code snippet:",
@@ -128,8 +181,8 @@ class ClaudeReviewClient:
         ]
 
         system_prompt = (
-            "You are CodeReviewAgent. Review code in the requested style and language. "
-            "Respond with valid JSON matching the required schema without additional text."
+            "You are CodeReviewAgent. Review the supplied code in the requested style and language. "
+            "Follow all schema requirements exactly and respond with valid JSON only."
         )
 
         return {

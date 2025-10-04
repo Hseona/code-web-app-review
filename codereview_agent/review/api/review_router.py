@@ -11,9 +11,10 @@ from pydantic import ValidationError
 
 from codereview_agent.common.exception.error_codes import ErrorCode
 from codereview_agent.common.exception.exceptions import ErrorCodeException
-from codereview_agent.review.schemas import ApiSuccessResponse, ReviewRequest
+from codereview_agent.review.schemas import ReviewRequest
 from codereview_agent.review.service import ReviewService
-from .openapi_docs import build_review_request_schema
+from codereview_agent.review.api.openapi_docs import build_review_request_schema
+from codereview_agent.common import ApiSuccessResponse
 
 router = APIRouter()
 review_service = ReviewService()

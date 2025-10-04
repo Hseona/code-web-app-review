@@ -1,6 +1,5 @@
 """Pydantic models for CodeReviewAgent."""
 
-from codereview_agent.review.models.review_data import ReviewData
 from codereview_agent.review.models.review_examples import EXAMPLE_REVIEW_RESPONSE
 from codereview_agent.review.models.review_metrics import ReviewMetrics
 from codereview_agent.review.models.suggestion import (
@@ -10,7 +9,6 @@ from codereview_agent.review.models.suggestion import (
 )
 
 __all__ = [
-    "ReviewData",
     "ReviewMetrics",
     "Suggestion",
     "SuggestionFix",
